@@ -1,0 +1,138 @@
+#include <WiFi.h>
+#include <FirebaseESP32.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <LiquidCrystal_I2C.h>
+#include "NewPing.h"
+
+// Credenciales Proyecto Firebase
+#define FIREBASE_HOST "https://emaseo-eee5b-default-rtdb.firebaseio.com/"
+#define FIREBASE_AUTH "2I7NLdepJANpU0PhQVzvQBiwApExdfNdX65uoZVi"
+
+// WIFI
+#define WIFI_SSID "CELERITY_CARRIOM" // Nombre de la red
+#define WIFI_PASSWORD "carcas19618" // Contraseña de la red
+
+const unsigned int writeInterval = 25000; // write interval (in ms)
+static const int RXPin = 16, TXPin = 17;
+static const uint32_t GPSBaud = 9600;
+String bateria = "";
+int rawValue = 0;
+float latitud = 0;
+float longitud = 0;
+
+// Sensor de distancia
+int trigPin = 4;      // trigger pin
+int echoPin = 0;      // echo pin
+NewPing sonar(trigPin, echoPin);
+
+TinyGPSPlus gps; // The TinyGPS++ object
+SoftwareSerial ss(RXPin, TXPin); // The serial connection to the GPS device
+LiquidCrystal_I2C lcd(0x27, 20, 4); // Definimos que nuestra pantalla Lcd sera de 20x4
+
+// Firebase
+FirebaseData firebaseData;
+String nodo = "/Contenedores/Contenedor 0001"; // Dirección en la que se ubicara nuestra informacion
+bool iterar = true;
+
+
+// setup
+void setup() {
+pinMode(2,OUTPUT);
+digitalWrite(2,HIGH);
+Serial.begin(9600);
+delay(1500);
+Serial.println("*****************************************************");
+Serial.println("********** Program Start : ESP32 publishes NEO-6M GPS position to AskSensors over MQTT");
+Serial.print("********** connecting to WIFI : ");
+
+ss.begin(GPSBaud);
+lcd.init();//Inicializar la pantalla lcd
+lcd.backlight();//Encender la luz de fondo
+lcd.print("INICIANDO");
+// WIFI
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD); // Comprobamos que esté conectada a la red WiFI
+// Firebase
+  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH); // Comprobamos que se conecte con la base de datos en Firebase
+  Firebase.reconnectWiFi(true);
+}
+// loop
+void loop() {
+  
+  lcd.setCursor (0, 0);//Poner el cursor en las coordenadas (0,0)
+  lcd.print("  CONTENEDOR EMASEO ");
+
+digitalWrite(2,HIGH);
+// This sketch displays information every time a new sentence is correctly encoded.
+while (ss.available() > 0)
+if (gps.encode(ss.read()))
+displayInfo();
+
+if (millis() > 1000 && gps.charsProcessed() < 10)
+{
+digitalWrite(2,LOW);
+Serial.println(F("No GPS detected: check wiring."));
+lcd.setCursor (0, 1);//Poner el cursor en las coordenadas (0,0)
+lcd.print("ERROR GPS");
+while(true);
+}
+
+float distancia = sonar.ping_median(10); // Iniciamos el sonar
+  int cm = distancia / 58.2; // Calculamos la distancia en cm
+  int nivel = 100 - ((cm-50) / 1.15); // Para saber el porcentaje
+  lcd.setCursor (0, 2);//poner el cursor en las coordenadas (0,2)
+  if (cm > 165 || cm < 50) // condición para medir el nivel
+  lcd.print("ERROR DE DISTANCIA"); // Si la distancia es menor a 50 y mayor a 165 da el mensaje
+  else
+  {
+    lcd.print("Contenedor al: ");
+    lcd.print(nivel); // Imprimimos el nivel del contenedor en la pantalla lcd
+    lcd.print("%  ");
+  }
+
+rawValue = analogRead(36); // Seleccionamos el pin analógico que utilizaremos para leer
+  
+   if (rawValue > 3701){
+   bateria = "COMPLETA"; 
+  }
+  if (rawValue > 2601 ||rawValue < 3700){
+   bateria = "MEDIA"; 
+  }
+   if (rawValue < 2600){
+   bateria = "BAJA"; 
+  }
+  
+  lcd.setCursor (0, 3);//Poner el cursor en las coordenadas (0,3)
+  lcd.print("BATERIA: ");
+  lcd.print(bateria); // Escribimos en la pantalla LCD el porcentaje de bateria que sobra
+  lcd.print("%      ");
+
+Firebase.setString(firebaseData, nodo + "/Nivel del Contenedor", nivel); // Enviamos el nivel del contenedor a Firebase
+Firebase.setString(firebaseData, nodo + "/Bateria", (bateria)); // Enviamos el nivel de batería a Firebase
+   
+delay(1000);
+
+}
+
+// GPS displayInfo
+void displayInfo() {
+
+if (gps.location.isValid()) {
+double latitude = (gps.location.lat());
+double longitude = (gps.location.lng());
+Serial.print("latitude:");
+Serial.println(latitude);
+Serial.print("longitude:");
+Serial.println(longitude);
+lcd.setCursor (0, 1);//Poner el cursor en las coordenadas (0,1)
+lcd.print("LAT:");lcd.print(latitude);
+lcd.print(" LON:");lcd.print(longitude);
+Firebase.setFloat(firebaseData, nodo + "/Ubicacion/Latitud", latitude); // Enviamos la latitud a Firebase
+Firebase.setFloat(firebaseData, nodo + "/Ubicacion/Longitud", longitude); // Enviamos la longitud a Firebase
+  
+} else {
+lcd.setCursor (0, 1);//Poner el cursor en las coordenadas (0,1)
+lcd.print("Buscando GPS");
+Serial.println(F("INVALID"));
+}
+}
